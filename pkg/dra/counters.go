@@ -90,9 +90,12 @@ func GetCounterResourcesForWorkload(
 					return nil, allErrs
 				}
 				for resName, qty := range charges {
-					existing := aggregated[resName]
-					existing.Add(qty)
-					aggregated[resName] = existing
+					if existing, ok := aggregated[resName]; ok {
+						existing.Add(qty)
+						aggregated[resName] = existing
+					} else {
+						aggregated[resName] = qty.DeepCopy()
+					}
 				}
 				log.V(4).Info("Counter charge computed", "podSet", ps.Name, "deviceClass", deviceClass, "charges", charges)
 			}

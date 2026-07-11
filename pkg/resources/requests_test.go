@@ -399,3 +399,40 @@ func TestResourceQuantityRoundTrips(t *testing.T) {
 		})
 	}
 }
+
+func TestResourceQuantityWithFormat(t *testing.T) {
+	cases := map[string]struct {
+		resource        corev1.ResourceName
+		value           int64
+		preferredFormat resource.Format
+		want            string
+	}{
+		"defaults to resource formatting without preferred format": {
+			resource:        "gpu.memory",
+			value:           19712 * 1024 * 1024,
+			preferredFormat: "",
+			want:            "20669530112",
+		},
+		"uses preferred BinarySI format": {
+			resource:        "gpu.memory",
+			value:           19712 * 1024 * 1024,
+			preferredFormat: resource.BinarySI,
+			want:            "19712Mi",
+		},
+		"cpu keeps milli formatting": {
+			resource:        corev1.ResourceCPU,
+			value:           1500,
+			preferredFormat: resource.BinarySI,
+			want:            "1500m",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := ResourceQuantityWithFormat(tc.resource, tc.value, tc.preferredFormat)
+			if got.String() != tc.want {
+				t.Errorf("ResourceQuantityWithFormat() = %q, want %q", got.String(), tc.want)
+			}
+		})
+	}
+}

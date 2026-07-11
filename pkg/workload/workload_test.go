@@ -734,7 +734,10 @@ func TestNewInfo(t *testing.T) {
 				features.SetFeatureGateDuringTest(t, fg, enabled)
 			}
 			info := NewInfo(&tc.workload, tc.infoOptions...)
-			if diff := cmp.Diff(info, &tc.wantInfo, cmpopts.IgnoreFields(Info{}, "Obj", "SchedulingHash")); diff != "" {
+			if diff := cmp.Diff(info, &tc.wantInfo,
+				cmpopts.IgnoreFields(Info{}, "Obj", "SchedulingHash"),
+				cmpopts.IgnoreFields(PodSetResources{}, "QuantityFormats"),
+			); diff != "" {
 				t.Errorf("NewInfo(_) = (-want,+got):\n%s", diff)
 			}
 		})
@@ -829,13 +832,13 @@ func TestUpdateWithRebuild(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			info := NewInfo(tc.initial, tc.initialOptions...)
 			if len(tc.updateOptions) == 0 {
-				if diff := cmp.Diff(tc.wantRequests, info.TotalRequests, cmpopts.IgnoreFields(PodSetResources{}, "Flavors")); diff == "" {
+				if diff := cmp.Diff(tc.wantRequests, info.TotalRequests, cmpopts.IgnoreFields(PodSetResources{}, "Flavors", "QuantityFormats")); diff == "" {
 					t.Fatal("precondition failed: initial TotalRequests should differ from expected post-rebuild state")
 				}
 			}
 			info.Update(logr.Discard(), tc.updated, tc.updateOptions...)
 			if diff := cmp.Diff(tc.wantRequests, info.TotalRequests,
-				cmpopts.IgnoreFields(PodSetResources{}, "Flavors")); diff != "" {
+				cmpopts.IgnoreFields(PodSetResources{}, "Flavors", "QuantityFormats")); diff != "" {
 				t.Errorf("TotalRequests after Update (-want,+got):\n%s", diff)
 			}
 		})
@@ -2029,10 +2032,33 @@ func TestWithPreprocessedDRAResources(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			info := NewInfo(&tc.workload, WithPreprocessedDRAResources(tc.draResources, nil))
 
-			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests); diff != "" {
+			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests, cmpopts.IgnoreFields(PodSetResources{}, "QuantityFormats")); diff != "" {
 				t.Errorf("Unexpected TotalRequests (-want,+got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestWithPreprocessedDRAResourcesPreservesQuantityFormat(t *testing.T) {
+	features.SetFeatureGateDuringTest(t, features.KueueDRAIntegration, true)
+
+	info := NewInfo(
+		utiltestingapi.MakeWorkload("test-wl", "default").
+			PodSets(*utiltestingapi.MakePodSet("main", 1).Obj()).
+			Obj(),
+		WithPreprocessedDRAResources(
+			map[kueue.PodSetReference]corev1.ResourceList{
+				"main": {
+					"gpu.memory": resource.MustParse("9984Mi"),
+				},
+			},
+			nil,
+		),
+	)
+
+	got := info.TotalRequests[0].ResourceList()["gpu.memory"]
+	if got.String() != "9984Mi" {
+		t.Errorf("ResourceList() formatted gpu.memory as %q, want %q", got.String(), "9984Mi")
 	}
 }
 
@@ -2110,7 +2136,7 @@ func TestWithPreprocessedDRAResourcesReplacesExtendedResources(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			info := NewInfo(&tc.workload, WithPreprocessedDRAResources(tc.draResources, tc.replacedExtendedResources))
 
-			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests); diff != "" {
+			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests, cmpopts.IgnoreFields(PodSetResources{}, "QuantityFormats")); diff != "" {
 				t.Errorf("Unexpected TotalRequests (-want,+got):\n%s", diff)
 			}
 		})

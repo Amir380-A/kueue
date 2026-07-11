@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
+	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	resourcehelpers "k8s.io/component-helpers/resource"
@@ -247,6 +248,9 @@ type PodSetResources struct {
 	Name kueue.PodSetReference
 	// Requests incorporates the requests from all pods in the podset.
 	Requests resources.Requests
+	// QuantityFormats preserves display formats for resources whose quantities
+	// are preprocessed before scheduler accounting stores them as integers.
+	QuantityFormats map[corev1.ResourceName]apiresource.Format
 	// Count indicates how many pods are in the podset.
 	Count int32
 
@@ -262,6 +266,14 @@ type PodSetResources struct {
 
 func (p *PodSetResources) SinglePodRequests() resources.Requests {
 	return p.Requests.ScaledDown(int64(p.Count))
+}
+
+func (p *PodSetResources) ResourceList() corev1.ResourceList {
+	ret := make(corev1.ResourceList, len(p.Requests))
+	for name, value := range p.Requests {
+		ret[name] = resources.ResourceQuantityWithFormat(name, value, p.QuantityFormats[name])
+	}
+	return ret
 }
 
 type TopologyRequest struct {
@@ -285,10 +297,11 @@ func (p *PodSetResources) ScaledTo(newCount int32) *PodSetResources {
 		return p
 	}
 	ret := &PodSetResources{
-		Name:     p.Name,
-		Requests: maps.Clone(p.Requests),
-		Count:    p.Count,
-		Flavors:  maps.Clone(p.Flavors),
+		Name:            p.Name,
+		Requests:        maps.Clone(p.Requests),
+		QuantityFormats: maps.Clone(p.QuantityFormats),
+		Count:           p.Count,
+		Flavors:         maps.Clone(p.Flavors),
 	}
 
 	if p.Count != 0 && p.Count != newCount {
@@ -637,6 +650,10 @@ func totalRequestsFromPodSets(wl *kueue.Workload, info *InfoOptions) []PodSetRes
 						setRes.Requests = make(resources.Requests)
 					}
 					setRes.Requests[resName] += resources.ResourceValue(resName, quantity)
+					if setRes.QuantityFormats == nil {
+						setRes.QuantityFormats = make(map[corev1.ResourceName]apiresource.Format)
+					}
+					setRes.QuantityFormats[resName] = quantity.Format
 				}
 			}
 		}
@@ -656,10 +673,14 @@ func totalRequestsFromAdmission(wl *kueue.Workload) []PodSetResources {
 	totalCounts := podSetsCounts(wl)
 	for _, psa := range wl.Status.Admission.PodSetAssignments {
 		setRes := PodSetResources{
-			Name:     psa.Name,
-			Flavors:  psa.Flavors,
-			Count:    ptr.Deref(psa.Count, totalCounts[psa.Name]),
-			Requests: resources.NewRequests(psa.ResourceUsage),
+			Name:            psa.Name,
+			Flavors:         psa.Flavors,
+			Count:           ptr.Deref(psa.Count, totalCounts[psa.Name]),
+			Requests:        resources.NewRequests(psa.ResourceUsage),
+			QuantityFormats: make(map[corev1.ResourceName]apiresource.Format, len(psa.ResourceUsage)),
+		}
+		for name, quantity := range psa.ResourceUsage {
+			setRes.QuantityFormats[name] = quantity.Format
 		}
 		if features.Enabled(features.TopologyAwareScheduling) && psa.TopologyAssignment != nil {
 			setRes.TopologyRequest = &TopologyRequest{

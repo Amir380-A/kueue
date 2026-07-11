@@ -983,13 +983,13 @@ func getUsage(frq resources.FlavorResourceQuantities, cq *clusterQueue) []kueue.
 				used := frq[fr]
 				rUsage := kueue.ResourceUsage{
 					Name:  rName,
-					Total: resources.ResourceQuantity(rName, used.Int64()),
+					Total: resources.ResourceQuantityWithFormat(rName, used.Int64(), rQuota.Format),
 				}
 				// Enforce `borrowed=0` if the clusterQueue doesn't belong to a cohort.
 				if cq.HasParent() {
 					borrowed := used.Sub(rQuota.Nominal).Int64()
 					if borrowed > 0 {
-						rUsage.Borrowed = resources.ResourceQuantity(rName, borrowed)
+						rUsage.Borrowed = resources.ResourceQuantityWithFormat(rName, borrowed, rQuota.Format)
 					}
 				}
 				outFlvUsage.Resources = append(outFlvUsage.Resources, rUsage)

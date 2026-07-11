@@ -18,6 +18,7 @@ package scheduler
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 
@@ -42,6 +43,7 @@ type ResourceQuota struct {
 	Nominal        resources.Amount
 	BorrowingLimit *resources.Amount
 	LendingLimit   *resources.Amount
+	Format         resource.Format
 }
 
 // Equal reports whether two ResourceQuota values are equal, using
@@ -56,7 +58,7 @@ func (q ResourceQuota) Equal(other ResourceQuota) bool {
 	if !ptr.Equal(q.BorrowingLimit, other.BorrowingLimit) {
 		return false
 	}
-	return ptr.Equal(q.LendingLimit, other.LendingLimit)
+	return ptr.Equal(q.LendingLimit, other.LendingLimit) && q.Format == other.Format
 }
 
 func createResourceQuotas(kueueRgs []kueue.ResourceGroup) map[resources.FlavorResource]ResourceQuota {
@@ -70,6 +72,7 @@ func createResourceQuotas(kueueRgs []kueue.ResourceGroup) map[resources.FlavorRe
 			for _, kueueQuota := range kueueFlavor.Resources {
 				quota := ResourceQuota{
 					Nominal: resources.AmountFromQuantity(kueueQuota.Name, kueueQuota.NominalQuota),
+					Format:  kueueQuota.NominalQuota.Format,
 				}
 				if kueueQuota.BorrowingLimit != nil {
 					quota.BorrowingLimit = new(resources.AmountFromQuantity(kueueQuota.Name, *kueueQuota.BorrowingLimit))

@@ -1064,6 +1064,7 @@ func TestCacheClusterQueueOperations(t *testing.T) {
 			if diff := cmp.Diff(tc.wantClusterQueues, cache.hm.ClusterQueues(),
 				cmpopts.IgnoreFields(clusterQueue{}, "ResourceGroups"),
 				cmpopts.IgnoreFields(workload.Info{}, "Obj", "LastAssignment", "SchedulingHash"),
+				cmpopts.IgnoreFields(workload.PodSetResources{}, "QuantityFormats"),
 				cmpopts.IgnoreUnexported(clusterQueue{}, hierarchy.ClusterQueue[*cohort]{}),
 				cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Unexpected clusterQueues (-want,+got):\n%s", diff)
@@ -1571,6 +1572,12 @@ func TestClusterQueueUsage(t *testing.T) {
 		Cohort("one").Obj()
 	cqWithOutCohort := cq.DeepCopy()
 	cqWithOutCohort.Spec.CohortName = ""
+	cqDRA := utiltestingapi.MakeClusterQueue("dra").
+		ResourceGroup(
+			*utiltestingapi.MakeFlavorQuotas("default").
+				Resource("gpu.memory", "800Gi").
+				Obj(),
+		).Obj()
 	workloads := []kueue.Workload{
 		*utiltestingapi.MakeWorkload("one", "").
 			Request(corev1.ResourceCPU, "8").
@@ -1592,6 +1599,17 @@ func TestClusterQueueUsage(t *testing.T) {
 					Assignment("example.com/gpu", "model_b", "6").
 					Obj()).
 				Obj(), now).
+			Obj(),
+	}
+	draWorkloads := []kueue.Workload{
+		*utiltestingapi.MakeWorkload("dra-workload", "").
+			Request("gpu.memory", "19712Mi").
+			ReserveQuotaAt(utiltestingapi.MakeAdmission("dra").
+				PodSets(utiltestingapi.MakePodSetAssignment(kueue.DefaultPodSetName).
+					Assignment("gpu.memory", "default", "19712Mi").
+					Obj()).
+				Obj(), now).
+			Condition(metav1.Condition{Type: kueue.WorkloadAdmitted, Status: metav1.ConditionTrue}).
 			Obj(),
 	}
 	cases := map[string]struct {
@@ -1878,6 +1896,26 @@ func TestClusterQueueUsage(t *testing.T) {
 					},
 				},
 			},
+			wantAdmittedWorkloads: 1,
+		},
+		"counter-based DRA usage preserves BinarySI format": {
+			clusterQueue: cqDRA,
+			workloads:    draWorkloads,
+			wantReservedResources: []kueue.FlavorUsage{{
+				Name: "default",
+				Resources: []kueue.ResourceUsage{{
+					Name:  "gpu.memory",
+					Total: resource.MustParse("19712Mi"),
+				}},
+			}},
+			wantReservingWorkloads: 1,
+			wantUsedResources: []kueue.FlavorUsage{{
+				Name: "default",
+				Resources: []kueue.ResourceUsage{{
+					Name:  "gpu.memory",
+					Total: resource.MustParse("19712Mi"),
+				}},
+			}},
 			wantAdmittedWorkloads: 1,
 		},
 	}
@@ -3361,7 +3399,7 @@ func TestCohortCycles(t *testing.T) {
 		gotResource := cache.hm.Cohort("cohort").getResourceNode()
 		wantResource := resourceNode{
 			Quotas: map[resources.FlavorResource]ResourceQuota{
-				{Flavor: "arm", Resource: corev1.ResourceCPU}: {Nominal: resources.NewAmount(10_000)},
+				{Flavor: "arm", Resource: corev1.ResourceCPU}: {Nominal: resources.NewAmount(10_000), Format: resource.DecimalSI},
 			},
 			SubtreeQuota: resources.FlavorResourceQuantities{
 				{Flavor: "arm", Resource: corev1.ResourceCPU}: resources.NewAmount(15_000),
@@ -3397,7 +3435,7 @@ func TestCohortCycles(t *testing.T) {
 		gotResource := cache.hm.Cohort("cohort").getResourceNode()
 		wantResource := resourceNode{
 			Quotas: map[resources.FlavorResource]ResourceQuota{
-				{Flavor: "arm", Resource: corev1.ResourceCPU}: {Nominal: resources.NewAmount(10_000)},
+				{Flavor: "arm", Resource: corev1.ResourceCPU}: {Nominal: resources.NewAmount(10_000), Format: resource.DecimalSI},
 			},
 			SubtreeQuota: resources.FlavorResourceQuantities{
 				{Flavor: "arm", Resource: corev1.ResourceCPU}: resources.NewAmount(15_000),
@@ -3418,7 +3456,7 @@ func TestCohortCycles(t *testing.T) {
 		gotResource = cache.hm.Cohort("cohort").getResourceNode()
 		wantResource = resourceNode{
 			Quotas: map[resources.FlavorResource]ResourceQuota{
-				{Flavor: "arm", Resource: corev1.ResourceCPU}: {Nominal: resources.NewAmount(10_000)},
+				{Flavor: "arm", Resource: corev1.ResourceCPU}: {Nominal: resources.NewAmount(10_000), Format: resource.DecimalSI},
 			},
 			SubtreeQuota: resources.FlavorResourceQuantities{
 				{Flavor: "arm", Resource: corev1.ResourceCPU}: resources.NewAmount(10_000),

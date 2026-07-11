@@ -124,6 +124,13 @@ func ResourceQuantity(name corev1.ResourceName, v int64) resource.Quantity {
 	}
 }
 
+func ResourceQuantityWithFormat(name corev1.ResourceName, v int64, preferredFormat resource.Format) resource.Quantity {
+	if preferredFormat == "" || name == corev1.ResourceCPU {
+		return ResourceQuantity(name, v)
+	}
+	return newCanonicalQuantity(v, preferredFormat)
+}
+
 // newCanonicalQuantity returns a Quantity that will successfully round-trip.
 //
 // This means the returned quantity can be serialized then deserialized back to

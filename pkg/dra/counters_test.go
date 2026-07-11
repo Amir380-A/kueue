@@ -17,6 +17,7 @@ limitations under the License.
 package dra
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -30,7 +31,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	dracel "k8s.io/dynamic-resource-allocation/cel"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	configapi "sigs.k8s.io/kueue/apis/config/v1beta2"
+	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
 )
 
@@ -303,6 +307,89 @@ func TestComputeCounterChargesLogsNegativeCounter(t *testing.T) {
 		if !strings.Contains(joined, substr) {
 			t.Errorf("expected log output to contain %q, got:\n%s", substr, joined)
 		}
+	}
+}
+
+func TestGetCounterResourcesForWorkloadPreservesBinarySI(t *testing.T) {
+	claimTemplateName1 := "claim-tmpl-1"
+	claimTemplateName2 := "claim-tmpl-2"
+	wl := &kueue.Workload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "ns1"},
+		Spec: kueue.WorkloadSpec{
+			PodSets: []kueue.PodSet{{
+				Name:  "main",
+				Count: 1,
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{Name: "c", Image: "pause"}},
+						ResourceClaims: []corev1.PodResourceClaim{
+							{Name: "req-1", ResourceClaimTemplateName: &claimTemplateName1},
+							{Name: "req-2", ResourceClaimTemplateName: &claimTemplateName2},
+						},
+					},
+				},
+			}},
+		},
+	}
+
+	mapper := NewResourceMapper()
+	if err := mapper.PopulateFromConfiguration([]configapi.DeviceClassMapping{{
+		Name:             "gpu.memory",
+		DeviceClassNames: []corev1.ResourceName{"gpu.nvidia.com"},
+		Sources: []configapi.DeviceClassSourceConfig{{
+			Counter: &configapi.DeviceClassCounterSource{
+				Name:   "memory",
+				Driver: "gpu.nvidia.com",
+				DeviceSelector: resourcev1.DeviceSelector{
+					CEL: &resourcev1.CELDeviceSelector{Expression: "device.driver == 'gpu.nvidia.com'"},
+				},
+			},
+		}},
+	}}); err != nil {
+		t.Fatalf("PopulateFromConfiguration() failed: %v", err)
+	}
+
+	cl := utiltesting.NewClientBuilder(resourcev1.AddToScheme).
+		WithIndex(&resourcev1.ResourceSlice{}, "spec.driver", func(obj client.Object) []string {
+			return []string{obj.(*resourcev1.ResourceSlice).Spec.Driver}
+		}).
+		WithObjects(
+			utiltesting.MakeResourceClaimTemplate(claimTemplateName1, "ns1").DeviceRequest("device-request-1", "gpu.nvidia.com", 1).Obj(),
+			utiltesting.MakeResourceClaimTemplate(claimTemplateName2, "ns1").DeviceRequest("device-request-2", "gpu.nvidia.com", 1).Obj(),
+			&resourcev1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: "gpu.nvidia.com"}},
+			&resourcev1.ResourceSlice{
+				ObjectMeta: metav1.ObjectMeta{Name: "slice1"},
+				Spec: resourcev1.ResourceSliceSpec{
+					Driver: "gpu.nvidia.com",
+					Pool:   resourcev1.ResourcePool{Name: "pool1", Generation: 1, ResourceSliceCount: 1},
+					Devices: []resourcev1.Device{
+						makeDevice("mig-1g10gb-0", "1g.10gb", "9856Mi"),
+					},
+				},
+			},
+		).
+		Build()
+
+	ctx, _ := utiltesting.ContextWithLog(t)
+	got, errs := GetCounterResourcesForWorkload(ctx, cl, mapper, wl)
+	if len(errs) > 0 {
+		t.Fatalf("GetCounterResourcesForWorkload() returned errors: %v", errs.ToAggregate())
+	}
+
+	qty := got["main"]["gpu.memory"]
+	if diff := cmp.Diff(resource.MustParse("19712Mi"), qty); diff != "" {
+		t.Errorf("quantity mismatch (-want +got):\n%s", diff)
+	}
+	if got, want := qty.String(), "19712Mi"; got != want {
+		t.Errorf("quantity string mismatch: got %q, want %q", got, want)
+	}
+
+	statusJSON, err := json.Marshal(corev1.ResourceList{"gpu.memory": qty})
+	if err != nil {
+		t.Fatalf("failed to marshal resource list: %v", err)
+	}
+	if got, want := string(statusJSON), `{"gpu.memory":"19712Mi"}`; got != want {
+		t.Errorf("marshaled resource list mismatch: got %s, want %s", got, want)
 	}
 }
 

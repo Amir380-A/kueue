@@ -675,7 +675,7 @@ func (a *FlavorAssigner) assignFlavors(log logr.Logger, counts []int32) Assignme
 		psAssignment := PodSetAssignment{
 			Name:     podSet.Name,
 			Flavors:  make(ResourceAssignment, len(podSet.Requests)),
-			Requests: podSet.Requests.ToResourceList(),
+			Requests: podSet.ResourceList(),
 			Count:    podSet.Count,
 		}
 
