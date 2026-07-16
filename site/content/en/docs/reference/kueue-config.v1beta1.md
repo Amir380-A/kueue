@@ -1317,8 +1317,7 @@ last transition to the PodsReady=false condition after a Workload is Admitted an
 Such a transition may happen when a Pod failed and the replacement Pod
 is awaited to be scheduled.
 After exceeding the timeout the corresponding job gets suspended again
-and requeued after the backoff delay.
-Defaults to the value of timeout. Setting to &quot;0s&quot; disables recovery timeout checking.</p>
+and requeued after the backoff delay. The timeout is enforced only if waitForPodsReady.enable=true.	// Defaults to the value of timeout. Setting to &quot;0s&quot; disables recovery timeout checking.</p>
 </td>
 </tr>
 </tbody>
